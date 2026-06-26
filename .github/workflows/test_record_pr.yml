@@ -1,0 +1,35 @@
+name: TEST Record PR (fork verification)
+
+# Fork-only harness to verify the env-var fix in reusable_record_pr_details.yml.
+# Triggers on PRs in this fork and calls the reusable workflow FROM THIS BRANCH,
+# so it exercises the exact edited step (PR_NUMBER / PR_ACTION via env:).
+# Delete before merging the fix to mainline.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+jobs:
+  call-record-workflow:
+    uses: ./.github/workflows/reusable_record_pr_details.yml
+
+  verify-artifact:
+    needs: call-record-workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download PR info artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-info
+          path: ./pr-info
+      - name: Assert contents match the triggering event
+        env:
+          EXPECTED_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_ACTION: ${{ github.event.action }}
+        run: |
+          echo "Artifact pr-number.txt: $(cat ./pr-info/pr-number.txt)"
+          echo "Artifact pr-action.txt: $(cat ./pr-info/pr-action.txt)"
+          echo "Expected number=$EXPECTED_NUMBER action=$EXPECTED_ACTION"
+          test "$(cat ./pr-info/pr-number.txt)" = "$EXPECTED_NUMBER"
+          test "$(cat ./pr-info/pr-action.txt)" = "$EXPECTED_ACTION"
+          echo "PASS: env-var interpolation produced correct PR number and action"

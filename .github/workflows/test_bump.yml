@@ -1,0 +1,113 @@
+name: TEST Bump PR generation (fork verification)
+
+# Fork-only harness to verify the env-var fix in reusable_bump.yml's
+# GenerateChangeLog step AND that the bump flow still opens a PR correctly.
+#
+# It cannot call reusable_bump.yml directly: that workflow needs semantic-release,
+# an AWS OIDC PGP role, Bedrock, and a CI_TOKEN secret, none of which exist in a
+# fork. So this harness reproduces the relevant steps with the heavy infra stubbed,
+# while PRESERVING VERBATIM the line that was changed by the fix:
+#     --repo "$REPO_NAME"   (REPO_NAME sourced from env:, not inline ${{ }})
+# and the real branch -> commit -> gh pr create sequence.
+#
+# Delete before merging the fix to mainline.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  TestBump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Configure git identity
+        run: |
+          git config --local user.email "test@example.com"
+          git config --local user.name "fork-test"
+
+      - name: Stub release tooling (replaces semantic-release / Bedrock / seed tag)
+        run: |
+          # reusable_bump derives NEXT_SEMVER from semantic-release; fake it deterministically.
+          NEXT_SEMVER="0.0.0-forktest.${{ github.run_number }}"
+          echo "NEXT_SEMVER=$NEXT_SEMVER" >> $GITHUB_ENV
+
+          # generate_release_notes.py needs a prior tag (git describe) + Bedrock.
+          # Seed a tag and replace the script with a no-network stub that still
+          # consumes the SAME args (incl. --repo "$REPO_NAME") so the fixed line runs verbatim.
+          git tag -f v0.0.0-base
+          mkdir -p .dot-github/.github/scripts
+          cat > .dot-github/.github/scripts/generate_release_notes.py <<'PYEOF'
+          import argparse, sys
+          p = argparse.ArgumentParser()
+          p.add_argument("version", nargs="?", default="UNRELEASED")
+          p.add_argument("--repo", default=None)
+          p.add_argument("--since")
+          p.add_argument("--region", default="us-west-2")
+          p.add_argument("--json", action="store_true")
+          p.add_argument("--dry-run", action="store_true")
+          a = p.parse_args()
+          # Prove the fixed env var actually arrived intact:
+          assert a.repo, "FAIL: --repo was empty (REPO_NAME did not resolve)"
+          print(f"## {a.version}\n\n- stub release note for repo '{a.repo}' since {a.since}\n", file=sys.stdout)
+          print(f"[stub] received --repo={a.repo!r} --since={a.since!r}", file=sys.stderr)
+          PYEOF
+          touch CHANGELOG.md
+          cp CHANGELOG.md CHANGELOG.bak.md
+          git checkout -b bump/$NEXT_SEMVER
+
+      # --- Step copied verbatim from reusable_bump.yml (the FIX under test) ---
+      - name: GenerateChangeLog
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0)
+          NOTES=$(python .dot-github/.github/scripts/generate_release_notes.py "$NEXT_SEMVER" --since "$PREV_TAG" --repo "$REPO_NAME")
+
+          # Prepend new release notes to the original changelog
+          echo "$NOTES" > NEW_LOG.md
+          cat NEW_LOG.md CHANGELOG.bak.md > CHANGELOG.md
+          rm NEW_LOG.md
+
+          git add CHANGELOG.md
+
+          # Save for PR body
+          {
+            echo 'RELEASE_NOTES<<EOF'
+            echo "$NOTES"
+            echo 'EOF'
+          } >> $GITHUB_ENV
+      # --- end verbatim block ---
+
+      - name: Commit
+        run: |
+          git commit -sm "chore(release): $NEXT_SEMVER"
+
+      - name: PushPR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # cleanup is best-effort; ignore if the branch/PR doesn't pre-exist
+          git push -u origin bump/$NEXT_SEMVER
+          gh pr create --base test-bump-fork \
+            --title "chore(release): $NEXT_SEMVER" \
+            --body "$RELEASE_NOTES"
+
+      - name: Verify the changelog contains the resolved repo name
+        run: |
+          echo "----- CHANGELOG.md -----"
+          cat CHANGELOG.md
+          grep -q "repo '${{ github.event.repository.name }}'" CHANGELOG.md \
+            && echo "PASS: REPO_NAME resolved to '${{ github.event.repository.name }}' and flowed into release notes"
