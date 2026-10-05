@@ -313,8 +313,10 @@ jobs:
 
       # The action is pinned by full commit SHA (Dependabot proposes bumps; see
       # dependabot.yml). The agent can only read: its tools are read-only
-      # inspection plus Write confined to findings/ -- no `gh`, no arbitrary
-      # shell, no web access, no MCP tools. Posting is done afterwards by the
+      # inspection plus file writes confined to findings/ (an `Edit(...)` path
+      # rule covers the Write tool too; a `Write(...)` path rule does not
+      # match) -- no `gh`, no arbitrary shell, no web access, no MCP tools.
+      # Posting is done afterwards by the
       # "Post review" step, which validates every finding file. The step is
       # bounded by review_timeout_minutes so the post step still runs and posts
       # whatever was written before a timeout.
@@ -431,7 +433,7 @@ jobs:
             If there is nothing material to report, write nothing.
           claude_args: |
             --model ${{ inputs.model_id }}
-            --allowedTools "Read,Glob,Grep,Write(./findings/**),Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git -C pr-head diff:*),Bash(git -C pr-head log:*),Bash(git -C pr-head show:*),Bash(git -C pr-head blame:*)"
+            --allowedTools "Read,Glob,Grep,Edit(./findings/**),Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git -C pr-head diff:*),Bash(git -C pr-head log:*),Bash(git -C pr-head show:*),Bash(git -C pr-head blame:*)"
 
       # Fresh copy of the posting script, checked out after the agent ran: the
       # agent may only write under findings/, but the code that holds the
