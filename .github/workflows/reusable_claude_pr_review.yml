@@ -402,10 +402,11 @@ jobs:
             structured output; a later step validates and posts them as one
             review. Each finding:
               path      repo-relative, as in the diff
-              line      new-side line number; must be a changed or context
-                        line of pr.diff (in incremental mode, of
-                        interdiff.diff). A high-level point that maps to no
-                        single line goes on the most relevant changed line.
+              line      new-side line number in the head version of the file,
+                        taken from Read output or the diff hunk headers; must be
+                        a changed or context line of pr.diff (in incremental
+                        mode, of interdiff.diff). A high-level point that maps
+                        to no single line goes on the most relevant changed line.
               severity  blocking | should-fix | nit
               category  correctness | security | tests | docs | design
               symbol    the identifier the finding is about, plus a short slug

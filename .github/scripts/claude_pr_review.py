@@ -52,6 +52,8 @@ BOT_LOGINS = {"github-actions", "github-actions[bot]"}
 STATUS_CONTEXT = "Claude review"
 MAX_BODY_CHARS = 4000
 MAX_REASON_CHARS = 300
+# How far a mis-numbered anchor may be moved to the nearest commentable line.
+MAX_LINE_SNAP = 10
 
 FP_MARKER_RE = re.compile(r"<!-- claude-review fp=(?P<fp>\S+)(?: sev=(?P<sev>[a-z-]+))? -->")
 SUMMARY_MARKER_RE = re.compile(r"<!-- claude-review-summary reviewed=(?P<sha>[0-9a-f]{40}|none) -->")
@@ -241,6 +243,18 @@ def parse_agent_output(text: str) -> tuple[list[dict[str, Any]], list[str]] | No
     return records, errors
 
 
+def snap_line(line: int, valid: set[int]) -> int | None:
+    """Nearest commentable line to `line`, if one is within MAX_LINE_SNAP.
+
+    Models sometimes cite a line a few off; a slightly misplaced anchor beats
+    dropping the finding.
+    """
+    if line in valid:
+        return line
+    best = min(valid, key=lambda v: (abs(v - line), v), default=None)
+    return best if best is not None and abs(best - line) <= MAX_LINE_SNAP else None
+
+
 def select_findings(
     records: Iterable[dict[str, Any]],
     *,
@@ -251,7 +265,8 @@ def select_findings(
 ) -> tuple[list[Finding], list[Resolution], list[str]]:
     """Validate the agent's output and apply the posting rules.
 
-    - A finding must anchor to a line GitHub will accept on the PR diff.
+    - A finding must anchor to a line GitHub will accept on the PR diff
+      (snapped to the nearest one when it is slightly off).
     - Its fp must not already be suppressed. Two findings in one run that
       share an fp are distinct issues on the same symbol (the agent does not
       repeat itself within a run), so later ones get a numeric suffix.
@@ -282,9 +297,10 @@ def select_findings(
             line = -1
         fp = make_fp(path, str(r.get("category", "")), str(r.get("symbol", "")))
         label = f"{fp} ({path}:{line})"
+        snapped = snap_line(line, pr_lines.get(path, set()))
         if severity not in SEVERITIES or not body:
             dropped.append(f"{label}: missing/invalid severity or body")
-        elif line not in pr_lines.get(path, set()):
+        elif snapped is None:
             dropped.append(f"{label}: line is not part of the PR diff")
         elif fp in suppress:
             dropped.append(f"{label}: already raised")
@@ -297,6 +313,9 @@ def select_findings(
         ):
             dropped.append(f"{label}: {severity} on code this revision did not change")
         else:
+            if snapped != line:
+                print(f"note: {label}: anchored at nearest diff line {snapped}")
+                line = snapped
             n = 2
             base = fp
             while fp in seen or fp in suppress:

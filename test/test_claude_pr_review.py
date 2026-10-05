@@ -167,6 +167,11 @@ class SelectFindingsTest(TestCase):
         self.assertEqual([f.fp for f in findings], ["src/app.py::correctness::new", "new.py::correctness::n"])
         self.assertEqual((resolutions, dropped), ([], []))
 
+    def test_snaps_near_miss_line(self):
+        findings, _, dropped = self._select([_finding(line=16), _finding(path="new.py", line=0, symbol="z")])
+        self.assertEqual([(f.path, f.line) for f in findings], [("src/app.py", 13), ("new.py", 1)])
+        self.assertEqual(dropped, [])
+
     def test_rejects_line_outside_diff_and_bad_severity(self):
         findings, _, dropped = self._select([_finding(line=99), _finding(severity="major"), _finding(path="../etc/passwd")])
         self.assertEqual(findings, [])
