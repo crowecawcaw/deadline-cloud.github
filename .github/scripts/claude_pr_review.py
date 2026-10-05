@@ -240,7 +240,9 @@ def select_findings(
     """Validate the agent's output and apply the posting rules.
 
     - A finding must anchor to a line GitHub will accept on the PR diff.
-    - Its fp must not already be suppressed (or repeated within this run).
+    - Its fp must not already be suppressed. Two findings in one run that
+      share an fp are distinct issues on the same symbol (the agent does not
+      repeat itself within a run), so later ones get a numeric suffix.
     - Incremental reviews post no nits, and post should-fix findings only on
       lines this revision changed; blocking findings may land anywhere in the
       PR diff, since a missed blocker is worth raising late.
@@ -272,7 +274,7 @@ def select_findings(
             dropped.append(f"{label}: missing/invalid severity or body")
         elif line not in pr_lines.get(path, set()):
             dropped.append(f"{label}: line is not part of the PR diff")
-        elif fp in suppress or fp in seen:
+        elif fp in suppress:
             dropped.append(f"{label}: already raised")
         elif mode == "incremental" and severity == "nit":
             dropped.append(f"{label}: nit on an incremental review")
@@ -283,6 +285,10 @@ def select_findings(
         ):
             dropped.append(f"{label}: {severity} on code this revision did not change")
         else:
+            n = 2
+            base = fp
+            while fp in seen or fp in suppress:
+                fp, n = f"{base}-{n}", n + 1
             seen.add(fp)
             findings.append(Finding(path=path, line=line, severity=severity, fp=fp, body=body))
     return findings, resolutions, dropped

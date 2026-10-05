@@ -158,12 +158,21 @@ class SelectFindingsTest(TestCase):
         self.assertEqual(findings, [])
         self.assertEqual(len(dropped), 3)
 
-    def test_suppressed_and_duplicate(self):
+    def test_suppressed(self):
+        findings, _, dropped = self._select([_finding(), _finding(symbol="other")], suppress={"src/app.py::correctness::other"})
+        self.assertEqual([f.fp for f in findings], ["src/app.py::correctness::new"])
+        self.assertEqual(len(dropped), 1)
+
+    def test_same_fp_in_one_run_is_disambiguated(self):
         findings, _, dropped = self._select(
-            [_finding(), _finding(), _finding(symbol="other")], suppress={"src/app.py::correctness::other"}
+            [_finding(), _finding(body="Other bug."), _finding(body="Third.")],
+            suppress={"src/app.py::correctness::new-2"},
         )
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(len(dropped), 2)
+        self.assertEqual(
+            [f.fp for f in findings],
+            ["src/app.py::correctness::new", "src/app.py::correctness::new-3", "src/app.py::correctness::new-4"],
+        )
+        self.assertEqual(dropped, [])
 
     def test_incremental_rules(self):
         findings, _, dropped = self._select(

@@ -406,7 +406,9 @@ jobs:
                         single line goes on the most relevant changed line.
               severity  blocking | should-fix | nit
               category  correctness | security | tests | docs | design
-              symbol    the identifier or short slug the finding is about
+              symbol    the identifier the finding is about, plus a short slug
+                        for the issue when one identifier has several
+                        (`retry-off-by-one`, `retry-catches-baseexception`)
               body      the comment text (format below)
             `path`, `category`, and `symbol` form the finding's fingerprint
             (`<path>::<category>::<symbol>`). The same issue must always produce
