@@ -501,7 +501,7 @@ def ensure_commit(checkout: str, sha: str) -> bool:
     # A force-pushed-away commit is not reachable from the checkout's refs, but
     # GitHub still serves it by SHA. Private repos fail here (no credentials are
     # persisted), which just falls back to a full review.
-    subprocess.run(["git", "-C", checkout, "fetch", "--quiet", "--depth=200", "origin", sha], capture_output=True)
+    subprocess.run(["git", "-C", checkout, "fetch", "--quiet", "origin", sha], capture_output=True)
     return has_commit(checkout, sha)
 
 

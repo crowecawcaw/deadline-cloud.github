@@ -59,7 +59,7 @@ on:
         type: number
         default: 60
       review_timeout_minutes:
-        description: "Cap on the agent step alone. A full first review is deliberately thorough, so this is generous; on timeout the findings written so far are still posted."
+        description: "Cap on the agent step alone. A full first review is deliberately thorough, so this is generous. On timeout nothing is posted and the next push retries the review."
         required: false
         type: number
         default: 45
@@ -199,6 +199,11 @@ jobs:
           echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
           echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
 
+      # All steps below run only when a unique open PR was resolved above. If
+      # the step skipped (no unique open PR, bot actor, superseded head),
+      # `resolved` is false and every remaining step (including the credential
+      # and agent steps) is skipped, so the job finishes green without touching
+      # AWS or posting anything.
 
       # Check out the PR head read-only into a subdirectory. persist-credentials
       # is false so no token is left on disk, submodules are not fetched, and the
@@ -329,7 +334,6 @@ jobs:
           AWS_REGION: ${{ inputs.aws_region }}
         with:
           use_bedrock: "true"
-          show_full_output: "true"  # TEMP fork debugging; drop before upstream PR
           # Use the workflow's GITHUB_TOKEN (scoped pull-requests/issues: write by
           # the caller) for the action's own GitHub calls. Without this the action
           # falls back to minting a Claude GitHub App installation token, which 401s
