@@ -11,7 +11,7 @@ so it is predictable, testable, and posts no model output it has not validated.
            writes the diffs and prior state the agent reads, and marks the
            commit status pending.
   post     After the agent runs. Validates the agent's findings, posts the
-           new findings as one batched review, resolves threads the agent judged
+           new findings as one batched review, marks threads the agent judged
            addressed, then updates the summary comment and the commit status.
 
 Each review comment ends with a hidden marker
@@ -21,6 +21,12 @@ same finding yields the same fp on every revision. The summary comment carries
   <!-- claude-review-summary reviewed=<sha> -->
 recording the last head commit that was fully reviewed; the next revision is
 reviewed incrementally against it.
+
+A thread the agent judges addressed gets a bot reply ending in
+  <!-- claude-review addressed -->
+and from then on counts as closed, like a resolved thread. (GitHub only lets a
+token with `contents: write` resolve review threads, which this workflow does
+not request; a maintainer can still click Resolve to collapse it.)
 
 All inputs come from environment variables set by the workflow; see main().
 """
@@ -53,6 +59,7 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # fp parts are path-like identifiers; anything else (spaces, quotes, "-->")
 # would corrupt the marker.
 FP_PART_RE = re.compile(r"[^A-Za-z0-9_./+\-]")
+ADDRESSED_MARKER = "<!-- claude-review addressed -->"
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,\d+)? @@")
 
 
@@ -111,6 +118,7 @@ class Thread:
     severity: str
     path: str
     line: int | None
+    # Resolved in GitHub, or marked addressed by this bot.
     is_resolved: bool
     is_outdated: bool
     first_comment_id: int | None
@@ -136,7 +144,11 @@ def parse_threads(nodes: Iterable[dict[str, Any]]) -> list[Thread]:
                 severity=sev,
                 path=node.get("path") or "",
                 line=node.get("line"),
-                is_resolved=bool(node.get("isResolved")),
+                is_resolved=bool(node.get("isResolved"))
+                or any(
+                    ((c.get("author") or {}).get("login") in BOT_LOGINS) and ADDRESSED_MARKER in (c.get("body") or "")
+                    for c in comments[1:]
+                ),
                 is_outdated=bool(node.get("isOutdated")),
                 first_comment_id=comments[0].get("databaseId"),
                 body=FP_MARKER_RE.sub("", comments[0].get("body", "")).strip(),
@@ -341,8 +353,8 @@ def render_summary(
         f"{headline}\n\n"
         f"Open: **{counts['blocking']} blocking** · {counts['should-fix']} should-fix · {counts['nit']} nit. {state}".rstrip()
         + "\n\n"
-        "<sub>Resolve a thread once it is addressed, or reply with why not; the next revision's review "
-        "re-checks open threads and resolves those it agrees are handled. Later revisions review only "
+        "<sub>Fix or reply to each thread; the next revision's review re-checks open threads and marks "
+        "those it agrees are handled as addressed. Resolving a thread also closes it. Later revisions review only "
         "what changed.</sub>\n\n"
         f"<!-- claude-review-summary reviewed={reviewed_sha or 'none'} -->"
     )
@@ -551,24 +563,19 @@ def post_review(env: Env, findings: list[Finding]) -> int:
     return posted
 
 
-RESOLVE_MUTATION = "mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ isResolved } } }"
-
-
-def resolve_threads(env: Env, threads: list[Thread], resolutions: list[Resolution]) -> int:
+def mark_addressed(env: Env, threads: list[Thread], resolutions: list[Resolution]) -> int:
     by_fp: dict[str, list[Thread]] = {}
     for t in threads:
-        if not t.is_resolved:
+        if not t.is_resolved and t.first_comment_id:
             by_fp.setdefault(t.fp, []).append(t)
     done = 0
     for r in resolutions:
         for t in by_fp.pop(r.fp, []):
-            if t.first_comment_id:
-                gh(
-                    f"repos/{env.repo}/pulls/{env.pr}/comments/{t.first_comment_id}/replies",
-                    "-f", f"body=Resolving: {r.reason}",
-                    check=False,
-                )
-            if gh("graphql", "-f", f"query={RESOLVE_MUTATION}", "-f", f"id={t.id}", check=False) is not None:
+            if gh(
+                f"repos/{env.repo}/pulls/{env.pr}/comments/{t.first_comment_id}/replies",
+                "-f", f"body=Addressed: {r.reason}\n\n{ADDRESSED_MARKER}",
+                check=False,
+            ) is not None:
                 done += 1
     return done
 
@@ -595,7 +602,7 @@ def post(env: Env, *, agent_ok: bool, agent_output: str, mode: str, prior_sha: s
 
     posted = post_review(env, findings)
     threads = fetch_threads(env.repo, env.pr)
-    resolved = resolve_threads(env, threads, resolutions) if resolutions else 0
+    resolved = mark_addressed(env, threads, resolutions) if resolutions else 0
     if resolved:
         threads = fetch_threads(env.repo, env.pr)
     counts = open_counts(threads)

@@ -23,7 +23,7 @@
 #   - The first review is a full, thorough pass. Its head commit is recorded
 #     in a summary comment; each later revision is reviewed incrementally
 #     against the last recorded commit: open threads are re-checked (and
-#     resolved when addressed), and only newly changed code is reviewed.
+#     marked addressed when fixed), and only newly changed code is reviewed.
 #   - Findings carry a severity (blocking / should-fix / nit). Nits are posted
 #     only on the full review.
 #   - A sticky summary comment and a "Claude review" commit status report
@@ -88,7 +88,7 @@ on:
 # withholds fails at startup, so declaring `statuses: write` here would break
 # every caller that has not yet granted it. Callers grant, least privilege:
 #   contents: read        read the repo
-#   pull-requests: write  post review comments, resolve threads (also covers
+#   pull-requests: write  post review comments and replies (also covers
 #                         the commits/{sha}/pulls lookup used to resolve the PR)
 #   issues: write         post/update the summary comment
 #   id-token: write       mint the OIDC token for Bedrock
@@ -432,7 +432,7 @@ jobs:
             --json-schema '{"type":"object","additionalProperties":false,"required":["findings","resolutions"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","line","severity","category","symbol","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["blocking","should-fix","nit"]},"category":{"type":"string"},"symbol":{"type":"string"},"body":{"type":"string"}}}},"resolutions":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["fp","reason"],"properties":{"fp":{"type":"string"},"reason":{"type":"string"}}}}}}'
             --allowedTools "Read,Glob,Grep,Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git -C pr-head diff:*),Bash(git -C pr-head log:*),Bash(git -C pr-head show:*),Bash(git -C pr-head blame:*)"
 
-      # Validate the agent's findings and post them as one review, resolve the
+      # Validate the agent's findings and post them as one review, mark the
       # threads it judged addressed, then update the summary comment and the
       # commit status. Runs after an agent failure or timeout too, to report the
       # review as unfinished, but not on cancellation, which means a newer push

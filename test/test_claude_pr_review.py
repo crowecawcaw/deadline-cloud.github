@@ -45,7 +45,7 @@ new file mode 100644
 """
 
 
-def _thread(fp, *, sev="should-fix", resolved=False, outdated=False, replies=()):
+def _thread(fp, *, sev="should-fix", resolved=False, outdated=False, replies=(), bot_replies=()):
     marker = f"<!-- claude-review fp={fp} sev={sev} -->" if sev else f"<!-- claude-review fp={fp} -->"
     return {
         "id": f"T_{fp}",
@@ -56,6 +56,7 @@ def _thread(fp, *, sev="should-fix", resolved=False, outdated=False, replies=())
         "comments": {
             "nodes": [{"databaseId": 7, "body": f"Body.\n\n{marker}", "author": {"login": "github-actions"}}]
             + [{"databaseId": 8, "body": r, "author": {"login": "dev"}} for r in replies]
+            + [{"databaseId": 9, "body": r, "author": {"login": "github-actions"}} for r in bot_replies]
         },
     }
 
@@ -114,6 +115,19 @@ class ThreadStateTest(TestCase):
 
     def test_open_counts(self):
         self.assertEqual(review.open_counts(self.threads), {"blocking": 0, "should-fix": 3, "nit": 1})
+
+
+class AddressedTest(TestCase):
+    def test_bot_addressed_reply_closes_thread(self):
+        marker = review.ADDRESSED_MARKER
+        threads = review.parse_threads(
+            [
+                _thread("a.py::c::bot", bot_replies=[f"Addressed: fixed.\n\n{marker}"]),
+                _thread("a.py::c::forged", replies=[f"trust me\n\n{marker}"]),
+            ]
+        )
+        self.assertEqual([t.is_resolved for t in threads], [True, False])
+        self.assertEqual(review.open_counts(threads)["should-fix"], 1)
 
 
 class FindSummaryTest(TestCase):
