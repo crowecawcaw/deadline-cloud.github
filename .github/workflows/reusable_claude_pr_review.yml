@@ -28,8 +28,8 @@
 #     only on the full review.
 #   - A sticky summary comment and a "Claude review" commit status report
 #     what is still open, so authors know when the review has settled. The
-#     status needs `statuses: write` from the caller; without it the summary
-#     comment alone carries the signal.
+#     status needs `statuses: write` from the caller (see below); without it
+#     the summary comment alone carries the signal.
 name: Claude PR Review
 
 on:
@@ -83,16 +83,18 @@ on:
         description: "ARN of the OIDC role that can mint a Bedrock bearer token. Kept in a secret so the account id is configured in one place."
         required: true
 
-# Least privilege: read the repo, post PR/issue comments (pull-requests: write
-# also covers the commits/{sha}/pulls lookup used to resolve the PR), set the
-# "Claude review" commit status (statuses: write), and mint the OIDC token
-# (id-token: write). No write access to contents and no admin scopes.
-permissions:
-  contents: read
-  pull-requests: write
-  issues: write
-  statuses: write
-  id-token: write
+# Permissions are deliberately not declared here: the job inherits exactly what
+# the caller grants. A reusable workflow that declares a permission its caller
+# withholds fails at startup, so declaring `statuses: write` here would break
+# every caller that has not yet granted it. Callers grant, least privilege:
+#   contents: read        read the repo
+#   pull-requests: write  post review comments, resolve threads (also covers
+#                         the commits/{sha}/pulls lookup used to resolve the PR)
+#   issues: write         post/update the summary comment
+#   id-token: write       mint the OIDC token for Bedrock
+#   statuses: write       optional: set the "Claude review" commit status
+# No write access to contents and no admin scopes. The agent's tools cannot
+# reach GitHub; only the deterministic prepare/post steps use the token.
 
 jobs:
   review:
