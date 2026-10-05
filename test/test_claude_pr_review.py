@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-import tempfile
 from pathlib import Path
 from unittest import TestCase, main as unittest_main
 
@@ -188,16 +187,19 @@ class SelectFindingsTest(TestCase):
         self.assertEqual(len(dropped), 1)
 
 
-class LoadAgentOutputTest(TestCase):
-    def test_reads_objects_and_lists_and_reports_garbage(self):
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d)
-            (p / "1.json").write_text(json.dumps(_finding()))
-            (p / "2.json").write_text(json.dumps([_finding(symbol="x"), "junk"]))
-            (p / "3.json").write_text("{not json")
-            records, errors = review.load_agent_output(p.glob("*.json"))
-        self.assertEqual(len(records), 2)
-        self.assertEqual(len(errors), 2)
+class ParseAgentOutputTest(TestCase):
+    def test_flattens_findings_and_resolutions(self):
+        text = json.dumps({"findings": [_finding(), "junk"], "resolutions": [{"fp": "a::b::c", "reason": "Fixed."}]})
+        records, errors = review.parse_agent_output(text)
+        self.assertEqual([r["kind"] for r in records], ["finding", "resolve"])
+        self.assertEqual(len(errors), 1)
+
+    def test_empty_lists_are_a_clean_pass(self):
+        self.assertEqual(review.parse_agent_output('{"findings": [], "resolutions": []}'), ([], []))
+
+    def test_missing_or_malformed_output_is_none(self):
+        for text in ("", "   ", "{not json", "[]", "null"):
+            self.assertIsNone(review.parse_agent_output(text), text)
 
 
 class StatusAndSummaryTest(TestCase):

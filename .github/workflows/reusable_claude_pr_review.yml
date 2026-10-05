@@ -12,12 +12,12 @@
 # given only AWS_BEARER_TOKEN_BEDROCK, which is scoped to Bedrock model
 # invocation -- the agent never holds AWS credentials.
 #
-# Other guardrails: the action is pinned by commit SHA, the agent holds no
-# GitHub token and its tools are restricted to read-only inspection plus writing
-# finding files under findings/, the PR head is checked out read-only and never
-# executed, and each run is bounded by time limits. A deterministic script
-# (.github/scripts/claude_pr_review.py) validates the agent's findings and does
-# all posting.
+# Other guardrails: the action is pinned by commit SHA, the agent's tools are
+# restricted to read-only inspection (it cannot write files or reach GitHub)
+# and it returns its findings as structured output, the PR head is checked out
+# read-only and never executed, and each run is bounded by time limits. A
+# deterministic script (.github/scripts/claude_pr_review.py) validates the
+# findings and does all posting.
 #
 # Review flow per PR:
 #   - The first review is a full, thorough pass. Its head commit is recorded
@@ -313,13 +313,12 @@ jobs:
 
       # The action is pinned by full commit SHA (Dependabot proposes bumps; see
       # dependabot.yml). The agent can only read: its tools are read-only
-      # inspection plus file writes confined to findings/ (an `Edit(...)` path
-      # rule covers the Write tool too; a `Write(...)` path rule does not
-      # match) -- no `gh`, no arbitrary shell, no web access, no MCP tools.
-      # Posting is done afterwards by the
-      # "Post review" step, which validates every finding file. The step is
-      # bounded by review_timeout_minutes so the post step still runs and posts
-      # whatever was written before a timeout.
+      # inspection -- no file writes, no `gh`, no arbitrary shell, no web
+      # access, no MCP tools. It returns findings as structured output
+      # (--json-schema), which the "Post review" step validates and posts. The
+      # step is bounded by review_timeout_minutes; on timeout nothing is
+      # posted and the incremental baseline stays put, so the next push
+      # re-reviews the same changes.
       - name: Claude PR review
         id: agent
         if: steps.meta.outputs.resolved == 'true'
@@ -375,13 +374,13 @@ jobs:
             Incremental mode: the rest of the PR was already reviewed.
             1. For each open thread, decide whether this revision addresses it,
                or whether a reply gives a sound reason to leave it (intentional,
-               out of scope, a false positive). If so, write a resolve entry
+               out of scope, a false positive). If so, add a resolution
                (below). If not, leave it open; do not re-raise it.
             2. Review `interdiff.diff`: new code, including the fixes for your
                earlier findings. Comment only on lines it changes.
             3. Do not re-audit unchanged code. The single exception is a
                blocking issue you are confident about.
-            Nits are not posted in incremental mode; do not write them.
+            Nits are not posted in incremental mode; do not report them.
 
             ── WHAT COUNTS ──
             Every finding has a severity:
@@ -397,33 +396,27 @@ jobs:
             code before writing it up; if still unsure, leave it out.
 
             ── HOW TO REPORT ──
-            You do not post anything yourself. Write each finding as its own
-            JSON file under `findings/` (e.g. `findings/001.json`) THE MOMENT
-            YOU HAVE IT -- the job has a hard time limit and anything not yet
-            written is lost. A later step validates and posts them as one
-            review. Shape:
-              {
-                "kind": "finding",
-                "path": "src/deadline/auth.py",   // repo-relative, as in the diff
-                "line": 42,                       // new-side line inside pr.diff
-                "severity": "blocking" | "should-fix" | "nit",
-                "category": "correctness" | "security" | "tests" | "docs" | "design",
-                "symbol": "validate_token",       // identifier/slug the finding is about
-                "body": "..."
-              }
+            You do not post anything yourself. Return your findings as the
+            structured output; a later step validates and posts them as one
+            review. Each finding:
+              path      repo-relative, as in the diff
+              line      new-side line number; must be a changed or context
+                        line of pr.diff (in incremental mode, of
+                        interdiff.diff). A high-level point that maps to no
+                        single line goes on the most relevant changed line.
+              severity  blocking | should-fix | nit
+              category  correctness | security | tests | docs | design
+              symbol    the identifier or short slug the finding is about
+              body      the comment text (format below)
             `path`, `category`, and `symbol` form the finding's fingerprint
             (`<path>::<category>::<symbol>`). The same issue must always produce
             the same fingerprint, so pick the symbol from the code, not your
             wording. A finding whose fingerprint is in `suppress`, or that
             restates an open thread, will not be posted -- skip it.
 
-            To resolve one of your open threads, write:
-              { "kind": "resolve", "fp": "<fp from open_threads>",
-                "reason": "<one sentence: what addressed it, or why the reply holds>" }
-
-            The line must be a changed or context line of `pr.diff` (in
-            incremental mode, of `interdiff.diff`). A high-level point that
-            maps to no single line goes on the most relevant changed line.
+            Each resolution closes one of your open threads:
+              fp        the thread's fp from open_threads
+              reason    one sentence: what addressed it, or why the reply holds
 
             Body: at most ~120 words of Markdown. First sentence states the
             defect. Then the concrete failure (inputs/state -> wrong result).
@@ -431,29 +424,17 @@ jobs:
             praise, no restating the code. Do not include a severity label or
             any HTML comment; both are added when posting.
 
-            If there is nothing material to report, write nothing.
+            If there is nothing material to report, return empty lists.
           claude_args: |
             --model ${{ inputs.model_id }}
-            --allowedTools "Read,Glob,Grep,Edit(./findings/**),Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git -C pr-head diff:*),Bash(git -C pr-head log:*),Bash(git -C pr-head show:*),Bash(git -C pr-head blame:*)"
+            --json-schema '{"type":"object","additionalProperties":false,"required":["findings","resolutions"],"properties":{"findings":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","line","severity","category","symbol","body"],"properties":{"path":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string","enum":["blocking","should-fix","nit"]},"category":{"type":"string"},"symbol":{"type":"string"},"body":{"type":"string"}}}},"resolutions":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["fp","reason"],"properties":{"fp":{"type":"string"},"reason":{"type":"string"}}}}}}'
+            --allowedTools "Read,Glob,Grep,Bash(cat:*),Bash(head:*),Bash(wc:*),Bash(jq:*),Bash(git -C pr-head diff:*),Bash(git -C pr-head log:*),Bash(git -C pr-head show:*),Bash(git -C pr-head blame:*)"
 
-      # Fresh copy of the posting script, checked out after the agent ran: the
-      # agent may only write under findings/, but the code that holds the
-      # GITHUB_TOKEN is never run from a directory the agent could reach.
-      - name: Check out workflow tooling (post)
-        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.0
-        with:
-          repository: ${{ inputs.tooling_repository }}
-          ref: ${{ inputs.tooling_ref }}
-          path: post-tooling
-          persist-credentials: false
-          submodules: false
-
-      # Validate the agent's finding files and post them as one review, resolve
-      # the threads it judged addressed, then update the summary comment and the
-      # commit status. Runs after an agent timeout too (but not on cancellation,
-      # which means a newer push superseded this run), so a partial review is
-      # still posted -- though it does not advance the incremental baseline.
+      # Validate the agent's findings and post them as one review, resolve the
+      # threads it judged addressed, then update the summary comment and the
+      # commit status. Runs after an agent failure or timeout too, to report the
+      # review as unfinished, but not on cancellation, which means a newer push
+      # superseded this run.
       - name: Post review
         if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
         env:
@@ -465,5 +446,8 @@ jobs:
           MODE: ${{ steps.prepare.outputs.mode }}
           PRIOR_SHA: ${{ steps.prepare.outputs.prior_sha }}
           AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          # Untrusted model output: passed as data via env, parsed and
+          # validated by the script, never interpolated into a shell command.
+          AGENT_OUTPUT: ${{ steps.agent.outputs.structured_output }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 post-tooling/.github/scripts/claude_pr_review.py post
+        run: python3 workflow-tooling/.github/scripts/claude_pr_review.py post

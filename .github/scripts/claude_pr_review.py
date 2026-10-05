@@ -2,15 +2,15 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 """Deterministic plumbing for the Claude PR review (reusable_claude_pr_review.yml).
 
-The review agent only reads code and writes finding files; everything that talks
-to GitHub lives here so it is predictable, testable, and holds no model output
-it has not validated.
+The review agent only reads code and returns its findings as structured output
+(claude-code-action's --json-schema); everything that talks to GitHub lives here
+so it is predictable, testable, and posts no model output it has not validated.
 
   prepare  Before the agent runs. Reads this bot's prior review threads and its
            summary comment, decides between a full and an incremental review,
            writes the diffs and prior state the agent reads, and marks the
            commit status pending.
-  post     After the agent runs. Validates the agent's finding files, posts the
+  post     After the agent runs. Validates the agent's findings, posts the
            new findings as one batched review, resolves threads the agent judged
            addressed, then updates the summary comment and the commit status.
 
@@ -202,19 +202,30 @@ class Resolution:
     reason: str
 
 
-def load_agent_output(paths: Iterable[Path]) -> tuple[list[dict[str, Any]], list[str]]:
-    records, errors = [], []
-    for p in sorted(paths):
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            errors.append(f"{p.name}: unreadable ({e})")
+def parse_agent_output(text: str) -> tuple[list[dict[str, Any]], list[str]] | None:
+    """Flatten the agent's structured output into finding and resolve records.
+
+    Returns None when there is no usable output at all (the agent did not
+    finish), so the caller can tell "found nothing" from "did not run".
+    """
+    try:
+        data = json.loads(text) if text and text.strip() else None
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    records: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for key, kind in (("findings", "finding"), ("resolutions", "resolve")):
+        items = data.get(key) or []
+        if not isinstance(items, list):
+            errors.append(f"{key} is not a list")
             continue
-        for item in data if isinstance(data, list) else [data]:
+        for item in items:
             if isinstance(item, dict):
-                records.append(item)
+                records.append({**item, "kind": kind})
             else:
-                errors.append(f"{p.name}: entry is not an object")
+                errors.append(f"{key} entry is not an object")
     return records, errors
 
 
@@ -424,7 +435,6 @@ class Env:
     base_sha: str
     checkout: str
     context_dir: Path
-    findings_dir: Path
     run_url: str
 
     @classmethod
@@ -440,7 +450,6 @@ class Env:
             base_sha=base,
             checkout=e.get("CHECKOUT_DIR", "pr-head"),
             context_dir=Path(e.get("CONTEXT_DIR", "review-context")),
-            findings_dir=Path(e.get("FINDINGS_DIR", "findings")),
             run_url=e.get("RUN_URL", ""),
         )
 
@@ -468,7 +477,6 @@ def pr_diff_base(env: Env) -> str:
 
 def prepare(env: Env) -> None:
     env.context_dir.mkdir(parents=True, exist_ok=True)
-    env.findings_dir.mkdir(parents=True, exist_ok=True)
     set_status(env.repo, env.head_sha, "pending", "Reviewing…", env.run_url)
 
     threads = fetch_threads(env.repo, env.pr)
@@ -559,14 +567,20 @@ def resolve_threads(env: Env, threads: list[Thread], resolutions: list[Resolutio
     return done
 
 
-def post(env: Env, *, agent_ok: bool, mode: str, prior_sha: str | None) -> None:
+def post(env: Env, *, agent_ok: bool, agent_output: str, mode: str, prior_sha: str | None) -> None:
     state_path = env.context_dir / "prior-review-state.json"
     suppress = set(json.loads(state_path.read_text(encoding="utf-8"))["suppress"]) if state_path.exists() else set()
     pr_lines = diff_right_lines((env.context_dir / "pr.diff").read_text(encoding="utf-8"))
     interdiff_path = env.context_dir / "interdiff.diff"
     interdiff_lines = diff_right_lines(interdiff_path.read_text(encoding="utf-8")) if interdiff_path.exists() else {}
 
-    records, errors = load_agent_output(env.findings_dir.glob("*.json"))
+    parsed = parse_agent_output(agent_output) if agent_ok else None
+    if parsed is None:
+        # Nothing usable came back (timeout, error, or malformed output):
+        # report the review as unfinished rather than as a clean pass.
+        agent_ok = False
+        parsed = ([], [])
+    records, errors = parsed
     findings, resolutions, dropped = select_findings(
         records, mode=mode, pr_lines=pr_lines, interdiff_lines=interdiff_lines, suppress=suppress
     )
@@ -616,7 +630,13 @@ def main(argv: list[str]) -> None:
         prior = os.environ.get("PRIOR_SHA") or None
         if prior is not None and not SHA_RE.match(prior):
             prior = None
-        post(env, agent_ok=os.environ.get("AGENT_OUTCOME") == "success", mode=mode, prior_sha=prior)
+        post(
+            env,
+            agent_ok=os.environ.get("AGENT_OUTCOME") == "success",
+            agent_output=os.environ.get("AGENT_OUTPUT", ""),
+            mode=mode,
+            prior_sha=prior,
+        )
 
 
 if __name__ == "__main__":
