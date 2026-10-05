@@ -330,6 +330,7 @@ jobs:
           AWS_REGION: ${{ inputs.aws_region }}
         with:
           use_bedrock: "true"
+          show_full_output: "true"  # TEMP fork debugging; drop before upstream PR
           # Use the workflow's GITHUB_TOKEN (scoped pull-requests/issues: write by
           # the caller) for the action's own GitHub calls. Without this the action
           # falls back to minting a Claude GitHub App installation token, which 401s
