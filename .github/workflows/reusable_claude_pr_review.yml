@@ -374,7 +374,9 @@ jobs:
             Incremental mode: the rest of the PR was already reviewed.
             1. For each open thread, decide whether this revision addresses it,
                or whether a reply gives a sound reason to leave it (intentional,
-               out of scope, a false positive). If so, add a resolution
+               out of scope, a false positive). Check any claim a reply makes
+               that the code can confirm (e.g. "callers already do X") before
+               accepting it. If addressed or justified, add a resolution
                (below). If not, leave it open; do not re-raise it.
             2. Review `interdiff.diff`: new code, including the fixes for your
                earlier findings. Comment only on lines it changes.
