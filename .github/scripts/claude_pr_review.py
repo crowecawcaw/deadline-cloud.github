@@ -309,7 +309,7 @@ def select_findings(
         elif (
             mode == "incremental"
             and severity != "blocking"
-            and line not in interdiff_lines.get(path, set())
+            and not {line, snapped} & interdiff_lines.get(path, set())
         ):
             dropped.append(f"{label}: {severity} on code this revision did not change")
         else:
