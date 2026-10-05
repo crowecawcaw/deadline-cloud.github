@@ -313,11 +313,17 @@ def render_summary(
     else:
         headline = f"Reviewed `{short}` (full review): {posted} finding{'s' if posted != 1 else ''}."
     must = counts["blocking"] + counts["should-fix"]
-    state = "✅ Nothing blocking." if must == 0 else "❌ Address or reply to the open threads."
+    if must:
+        state = "❌ Address or reply to the open threads."
+    elif agent_ok:
+        state = "✅ Nothing blocking."
+    else:
+        state = ""
     return (
         "**Claude review** · advisory\n\n"
         f"{headline}\n\n"
-        f"Open: **{counts['blocking']} blocking** · {counts['should-fix']} should-fix · {counts['nit']} nit. {state}\n\n"
+        f"Open: **{counts['blocking']} blocking** · {counts['should-fix']} should-fix · {counts['nit']} nit. {state}".rstrip()
+        + "\n\n"
         "<sub>Resolve a thread once it is addressed, or reply with why not; the next revision's review "
         "re-checks open threads and resolves those it agrees are handled. Later revisions review only "
         "what changed.</sub>\n\n"

@@ -223,6 +223,7 @@ class StatusAndSummaryTest(TestCase):
         )
         self.assertIn("reviewed=none", body)
         self.assertIn("did not finish", body)
+        self.assertNotIn("✅", body)
 
 
 if __name__ == "__main__":
